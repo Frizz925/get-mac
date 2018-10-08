@@ -7,6 +7,7 @@
 import unittest
 import getmac
 import io
+import re
 from os import path
 try:
     from unittest import mock
@@ -30,12 +31,12 @@ class MockHelper(object):
         self.cmd = cmd
         self.sample = sample
 
-    def create_side_effect(self, cmd, sample):
+    def create_side_effect(self, regex, sample):
         def side_effect(params, *args, **kwargs):
             output = None
             retcode = 0
             params = ' '.join(params) if isinstance(params, list) else params
-            if cmd in params:
+            if re.search(regex, params):
                 output = self.load_sample(sample)
             else:
                 retcode = 1
@@ -75,7 +76,7 @@ def mock_helper(platform_name, cmd, sample):
 @mock.patch('getmac.getmac.Popen')
 class TestSamples(unittest.TestCase):
     # Generic samples
-    @mock_helper('Linux', 'ifconfig', 'ifconfig.out')
+    @mock_helper('Linux', r'ifconfig$', 'ifconfig.out')
     def test_ifconfig(self):
         mac = getmac.get_mac_address(interface='eth0')
         self.assertEqual('74:d4:35:e9:45:71', mac)
@@ -91,15 +92,15 @@ class TestSamples(unittest.TestCase):
         mac = getmac.get_mac_address(interface='en0')
         self.assertEqual('2c:f0:ee:2f:c7:de', mac)
 
-    @mock_helper('Darwin', 'arp -a', 'OSX/arp_-a.out')
+    @mock_helper('Darwin', r'arp -a$', 'OSX/arp_-a.out')
     def test_osx_arp_a(self):
         mac = getmac.get_mac_address(ip='192.168.1.1')
-        self.assertEqual('58:6d:8f:7:c9:94', mac)
+        self.assertEqual('58:6d:8f:07:c9:94', mac)
 
-    @mock_helper('Darwin', 'arp -an', 'OSX/arp_-an.out')
+    @mock_helper('Darwin', r'arp -an?$', 'OSX/arp_-an.out')
     def test_osx_arp_an(self):
         mac = getmac.get_mac_address(ip='192.168.1.1')
-        self.assertEqual('58:6d:8f:7:c9:94', mac)
+        self.assertEqual('58:6d:8f:07:c9:94', mac)
 
     # Windows samples
     @mock_helper('Windows', 'getmac.exe', 'windows_10/getmac.out')
@@ -133,12 +134,12 @@ class TestSamples(unittest.TestCase):
         mac = getmac.get_mac_address(ip='192.168.16.2')
         self.assertEqual('00:50:56:f1:4c:50', mac)
 
-    @mock_helper('Linux', 'ifconfig ens33', 'ubuntu_18.04/ifconfig_ens33.out')
+    @mock_helper('Linux', r'ifconfig ens33$', 'ubuntu_18.04/ifconfig_ens33.out')
     def test_linux_ifconfig_ens33(self):
         mac = getmac.get_mac_address(interface='ens33')
         self.assertEqual('00:0c:29:b5:72:37', mac)
 
-    @mock_helper('Linux', 'ifconfig', 'ubuntu_18.04/ifconfig.out')
+    @mock_helper('Linux', r'ifconfig$', 'ubuntu_18.04/ifconfig.out')
     def test_linux_ifconfig(self):
         mac = getmac.get_mac_address(interface='ens33')
         self.assertEqual('00:0c:29:b5:72:37', mac)
@@ -153,13 +154,14 @@ class TestSamples(unittest.TestCase):
         mac = getmac.get_mac_address(interface='ens33')
         self.assertEqual('00:0c:29:b5:72:37', mac)
 
-    @mock_helper('Linux', 'ip neighbor show 192.168.16.2',
+    @mock_helper('Linux', r'ip neighbor show 192.168.16.2$',
                  'ubuntu_18.04/ip_neighbor_show_192-168-16-2.out')
     def test_linux_ip_neighbor_show_192_168_16_2(self):
         mac = getmac.get_mac_address(ip='192.168.16.2')
         self.assertEqual('00:50:56:f1:4c:50', mac)
 
-    @mock_helper('Linux', 'ip neighbor show', 'ubuntu_18.04/ip_neighbor_show.out')
+    @unittest.skip('No parser for `ip neighbor show`')
+    @mock_helper('Linux', r'ip neighbor show$', 'ubuntu_18.04/ip_neighbor_show.out')
     def test_linux_ip_neighbor_show(self):
         mac = getmac.get_mac_address(ip='192.168.16.2')
         self.assertEqual('00:50:56:f1:4c:50', mac)
