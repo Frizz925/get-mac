@@ -157,6 +157,10 @@ def get_mac_address(interface=None, ip=None, ip6=None,
                      .replace('\\n', '').replace('\\r', '')
         mac = mac.strip().lower().replace(' ', '').replace('-', ':')
 
+        # Fix for Mac OS X's arp -a command
+        if len(mac) < 17:
+            mac = ':'.join(map(_zeropad, mac.split(':')))
+
         # Fix cases where there are no colons
         if ':' not in mac and len(mac) == 12:
             if DEBUG:
@@ -185,8 +189,8 @@ def get_mac_address(interface=None, ip=None, ip6=None,
     return mac
 
 
-def _search(regex, text, group_index=0):
-    match = re.search(regex, text)
+def _search(regex, text, group_index=0, flags=0):
+    match = re.search(regex, text, flags)
     if match:
         return match.groups()[group_index]
 
@@ -378,16 +382,12 @@ def _hunt_for_mac(to_find, type_of_thing, net_ok=True):
             _fcntl_iface,
 
             # Fast ifconfig
-            (r'HWaddr ' + MAC_RE_COLON,
-             0, 'ifconfig', [to_find]),
-
-            # Fast Mac OS X
-            (r'ether ' + MAC_RE_COLON,
+            (r'(?:ether|HWaddr) ' + MAC_RE_COLON,
              0, 'ifconfig', [to_find]),
 
             # netstat
-            (to_find + r'.*(HWaddr) ' + MAC_RE_COLON,
-             1, 'netstat', ['-iae']),
+            (to_find + r'[:\s].+?(?=ether|HWaddr)[^\s]+ ' + MAC_RE_COLON,
+             0, 'netstat', ['-iae'], re.S),
 
             # ip link (Don't use 'list' due to SELinux [Android 24+])
             (to_find + r'.*\n.*link/ether ' + MAC_RE_COLON,
@@ -397,13 +397,9 @@ def _hunt_for_mac(to_find, type_of_thing, net_ok=True):
             (MAC_RE_COLON,
              0, 'networksetup', ['-getmacaddress %s' % to_find]),
 
-            # ifconfig
-            (to_find + r'.*(HWaddr) ' + MAC_RE_COLON,
-             1, 'ifconfig', ['', '-a', '-v']),
-
-            # Mac OS X
-            (to_find + r'.*(ether) ' + MAC_RE_COLON,
-             1, 'ifconfig', ['']),
+            # ifconfig on Mac OS X and Linux
+            (to_find + r'[:\s].+?(?=ether|HWaddr)[^\s]+ ' + MAC_RE_COLON,
+             0, 'ifconfig', ['', '-a', '-v'], re.S),
 
             # Tru64 ('-av')
             (to_find + r'.*(Ether) ' + MAC_RE_COLON,
@@ -451,30 +447,39 @@ def _try_methods(methods, to_find=None):
     None or raises an exception, we continue and try the next method."""
     found = None
     for m in methods:
-        try:
-            if isinstance(m, tuple):
-                for arg in m[3]:  # list(str)
+        if isinstance(m, tuple):
+            for arg in m[3]:  # list(str)
+                try:
                     if DEBUG:
                         print("Trying: '%s %s'" % (m[2], arg))
-                    # Arguments: (regex, _popen(command, arg), regex index)
-                    found = _search(m[0], _popen(m[2], arg), m[1])
+                    # Arguments: (regex, _popen(command, arg), regex index, [regex flags])
+                    if len(m) >= 5:
+                        found = _search(m[0], _popen(m[2], arg), m[1], m[4])
+                    else:
+                        found = _search(m[0], _popen(m[2], arg), m[1])
                     if DEBUG:
                         print("Result: %s\n" % found)
-            elif callable(m):
-                if DEBUG:
-                    print("Trying: '%s' (to_find: '%s')" % (m.__name__, str(to_find)))
+                    break
+                except Exception as ex:
+                    if DEBUG:
+                        print("Exception: %s" % str(ex))
+                    if DEBUG >= 2:
+                        traceback.print_exc()
+        elif callable(m):
+            if DEBUG:
+                print("Trying: '%s' (to_find: '%s')" % (m.__name__, str(to_find)))
+            try:
                 if to_find is not None:
                     found = m(to_find)
                 else:
                     found = m()
                 if DEBUG:
                     print("Result: %s\n" % found)
-        except Exception as ex:
-            if DEBUG:
-                print("Exception: %s" % str(ex))
-            if DEBUG >= 2:
-                traceback.print_exc()
-            continue
+            except Exception as ex:
+                if DEBUG:
+                    print("Exception: %s" % str(ex))
+                if DEBUG >= 2:
+                    traceback.print_exc()
         if found:
             break
     return found
@@ -501,5 +506,9 @@ def _fetch_ip_using_dns():
     ip = s.getsockname()[0]
     return ip
 
+def _zeropad(text):
+    text = '0' + text
+    text = text[-2:]
+    return text
 
 __all__ = ['get_mac_address']
